@@ -5009,6 +5009,11 @@ _save_coredump()
 	$COREDUMP_COMPRESSOR -f "$out_file"
 }
 
+_require_localhost()
+{
+	ping -q -W 1 -c 1 localhost >& /dev/null || _notrun "localhost not reachable"
+}
+
 init_rc
 
 ################################################################################
