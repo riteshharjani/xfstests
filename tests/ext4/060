@@ -1,0 +1,88 @@
+#! /bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (c) 2023 IBM Corporation.  All Rights Reserved.
+#
+# FS QA Test 060
+#
+# This is to test a ext4 regression against inconsistent values of
+# dioread_nolock mount option while in ext4_writepages path.
+# See - https://lore.kernel.org/linux-ext4/20230328090534.662l7yxj2e425j7w@quack3/T/#md19c34646e8b4a816498532c298a66ecf2ae77d4
+#
+. ./common/preamble
+_begin_fstest auto quick
+
+PID1=""
+PIDS=""
+trap "_cleanup; exit \$status" 0 1 2 3 15
+# Override the default cleanup function.
+ _cleanup()
+{
+	{
+		kill -SIGKILL $PID1 $PIDS
+		wait $PID1 $PIDS
+	} > /dev/null 2>&1
+
+	cd /
+	rm -r -f $tmp.*
+}
+
+# Import common functions.
+ . ./common/filter
+
+# real QA test starts here
+
+# Modify as appropriate.
+_supported_fs ext4
+_require_scratch
+
+_scratch_mkfs_ext4 >> $seqres.full 2>&1
+_scratch_mount
+_scratch_remount "dioread_nolock" >> $seqres.full 2>&1
+ret=$?
+if [ $ret -ne 0 ]; then
+	_notrun "dioread_nolock mount option not supported"
+fi
+
+testfile=$SCRATCH_MNT/testfile
+
+function run_buff_io_loop()
+{
+	# add buffered io case here
+	while [ 1 ]; do
+		xfs_io -fc "truncate 0" -c "pwrite 0 200M" -c "fsync" "$testfile.$1" > /dev/null 2>&1
+		sleep 2;
+	done
+}
+
+function run_remount_loop()
+{
+	# add remount loop case here
+	while [ 1 ]; do
+		_scratch_remount "dioread_nolock" >> $seqres.full 2>&1
+		sleep 1
+		_scratch_remount "dioread_lock" >> $seqres.full 2>&1
+		sleep 1
+	done
+}
+
+run_remount_loop &
+PID1=$!
+
+for i in $(seq 1 20); do
+	run_buff_io_loop $i &
+	PID=$!
+	PIDS="${PIDS} ${PID}"
+done
+
+sleep 10
+
+{
+	kill -SIGKILL $PID1 $PIDS
+	wait $PID1 $PIDS
+} > /dev/null 2>&1
+
+echo "Silence is golden"
+
+# success, all done
+status=0
+exit
