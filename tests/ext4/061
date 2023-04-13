@@ -1,0 +1,82 @@
+#! /bin/bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (c) 2023 IBM Corporation.  All Rights Reserved.
+#
+# FS QA Test 061
+#
+# Regression test for https://lore.kernel.org/all/20200318061301.4320-1-riteshh@linux.ibm.com/
+# ext4: Unregister sysfs path before destroying jbd2 journal
+#
+
+. ./common/preamble
+_begin_fstest auto quick
+
+pid_mloop=""
+pids_jloop=""
+trap "_cleanup; exit \$status" 0 1 2 3 15
+# Override the default cleanup function.
+_cleanup()
+{
+	{
+		kill -SIGKILL $pid_mloop $pids_jloop
+		wait $pid_mloop $pids_jloop
+	} > /dev/null 2>&1
+	cd /
+	rm -r -f $tmp.*
+}
+
+# Import common functions.
+. ./common/filter
+
+# real QA test starts here
+
+# Modify as appropriate.
+_supported_fs ext4
+_fixed_by_kernel_commit 5e47868fb94b63c \
+	"ext4: unregister sysfs path before destroying jbd2 journal"
+_require_scratch
+_require_fs_sysfs journal_task
+
+_scratch_mkfs_ext4 >> $seqres.full 2>&1
+# mount filesystem
+_scratch_mount >> $seqres.full 2>&1
+scratch_dev=$(_short_dev $SCRATCH_DEV)
+
+function mount_loop()
+{
+	while [ 1 ]; do
+		_scratch_unmount >> $seqres.full 2>&1
+		sleep 1;
+		_scratch_mount >> $seqres.full 2>&1
+		sleep 1;
+	done
+}
+
+function read_journal_task_loop()
+{
+	while [ 1 ]; do
+		cat /sys/fs/ext4/$scratch_dev/journal_task > /dev/null 2>&1
+		sleep 1;
+	done
+}
+
+mount_loop &
+pid_mloop=$!
+
+for i in $(seq 1 100); do
+	read_journal_task_loop &
+	pid=$!
+	pids_jloop="${pids_jloop} ${pid}"
+done
+
+sleep 20
+{
+	kill -SIGKILL $pid_mloop $pids_jloop
+	wait $pid_mloop $pids_jloop
+} > /dev/null 2>&1
+
+echo "Silence is golden"
+
+# success, all done
+status=0
+exit
