@@ -34,13 +34,16 @@
 
 void usage(char *progname)
 {
-	fprintf(stderr, "usage: %s [-t truncsize ] <-a size=N,off=M [-a ...]>  filename\n"
+	fprintf(stderr, "usage: %s [-t truncsize ] <-a size=N,off=M [-a ...]>  [-S] [-N] filename\n"
 	        "\t-t truncsize: truncate the file to a special size before AIO wirte\n"
 	        "\t-a: specify once AIO write size and startoff, this option can be specified many times, but less than 128\n"
 	        "\t\tsize=N: AIO write size\n"
 	        "\t\toff=M:  AIO write startoff\n"
-	        "e.g: %s -t 4608 -a size=4096,off=512 -a size=4096,off=4608 filename\n",
-	        progname, progname);
+			"\t-S: uses O_SYNC flag for open. By default O_SYNC is not used\n"
+			"\t-N: no_verify: means no write verification. By default noverify is false\n"
+	        "e.g: %s -t 4608 -a size=4096,off=512 -a size=4096,off=4608 filename\n"
+	        "e.g: %s -t 1048576 -a size=1048576 -S -N filename\n",
+	        progname, progname, progname);
 	exit(1);
 }
 
@@ -281,8 +284,10 @@ int main(int argc, char *argv[])
 	char *filename = NULL;
 	int num_events = 0;
 	off_t tsize = 0;
+	int o_sync = 0;
+	int no_verify = 0;
 
-	while ((c = getopt(argc, argv, "a:t:")) != -1) {
+	while ((c = getopt(argc, argv, "a:t:SN")) != -1) {
 		char *endp;
 
 		switch (c) {
@@ -296,6 +301,12 @@ int main(int argc, char *argv[])
 			break;
 		case 't':
 			tsize = strtoul(optarg, &endp, 0);
+			break;
+		case 'S':
+			o_sync = O_SYNC;
+			break;
+		case 'N':
+			no_verify = 1;
 			break;
 		default:
 			usage(argv[0]);
@@ -313,7 +324,7 @@ int main(int argc, char *argv[])
 	else
 		usage(argv[0]);
 
-	fd = open(filename, O_DIRECT | O_CREAT | O_TRUNC | O_RDWR, 0600);
+	fd = open(filename, O_DIRECT | O_CREAT | O_TRUNC | O_RDWR | o_sync, 0600);
 	if (fd == -1) {
 		perror("open");
 		return 1;
@@ -331,9 +342,11 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	if (io_verify(fd) != 0) {
-		fprintf(stderr, "Data verification fails\n");
-		return 1;
+	if (no_verify == 0) {
+		if (io_verify(fd) != 0) {
+			fprintf(stderr, "Data verification fails\n");
+			return 1;
+		}
 	}
 
 	close(fd);
